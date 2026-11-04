@@ -10,7 +10,7 @@
   <img src="https://img.shields.io/badge/Data-99%2C441%20orders-informational" alt="Data">
 </p>
 
-**🔗 在线体验**：**[olist-ops-monitoring.streamlit.app](https://olist-ops-monitoring-rafwfk9acvlbgsrib9bhyn.streamlit.app/)**
+**🔗 在线体验**（点击直达）：https://olist-ops-monitoring-rafwfk9acvlbgsrib9bhyn.streamlit.app/
 
 > 点开即可交互，无需安装任何环境。首次打开约需 20–30 秒（免费版休眠后需唤醒），建议用电脑浏览器访问。
 
