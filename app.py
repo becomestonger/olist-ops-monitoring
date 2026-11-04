@@ -52,6 +52,12 @@ RAW_COLS = [
 DATA_START = pd.Timestamp('2016-09-04').date()
 DATA_END = pd.Timestamp('2018-10-17').date()
 
+# 默认展示区间：排除两端数据稀疏的月份
+# 2016 年每月只有几十单，2018-09/10 数据集未收全（合计仅 20 单），
+# 直接看全区间会让 KPI 失真（末 7 天只有 7 单、准时率算不出来）
+DEFAULT_START = pd.Timestamp('2017-01-01').date()
+DEFAULT_END = pd.Timestamp('2018-08-31').date()
+
 # 告警阈值（依据：实测 z 的标准差为 1.33，用 2σ 会导致 11.8% 天数告警，过吵）
 Z_WARN = 2.5      # 关注
 Z_ALERT = 3.0     # 严重
@@ -192,7 +198,9 @@ def load_daily(start, end, states=None, categories=None):
     df['bad_z'] = (df['bad_review_rate'] - df['base28']) / se.replace(0, np.nan)
 
     # ── 移动平均 ──
-    df['bad_rate_ma7'] = df['bad_review_rate'].rolling(7, min_periods=3).mean()
+    # 均线必须用「掩码后」的序列算：否则 1 单 100% 这种小样本日
+    # 会把 7 日均线直接拉到 100%，图上出现假的尖峰
+    df['bad_rate_ma7'] = df['bad_rate_plot'].rolling(7, min_periods=3).mean()
     df['orders_ma7'] = df['orders'].rolling(7, min_periods=3).mean()
 
     # ── 告警等级 ──
@@ -284,9 +292,10 @@ st.sidebar.title('📊 筛选器')
 
 date_range = st.sidebar.date_input(
     '日期范围',
-    value=(DATA_START, DATA_END),
+    value=(DEFAULT_START, DEFAULT_END),
     min_value=DATA_START,
     max_value=DATA_END,
+    help='默认已排除两端数据稀疏的月份；需要看全量可手动拉到 2016-09-04 ~ 2018-10-17',
 )
 start = date_range[0] if len(date_range) > 0 else DATA_START
 end = date_range[1] if len(date_range) > 1 else DATA_END
@@ -332,9 +341,11 @@ def _delta(cur, prev, pct=True, good_up=True):
     sign = '+' if d >= 0 else ''
     return f'{sign}{d:.1f}{unit}'
 
-# 用最后 7 天 vs 前 7 天对比（避免单日噪音）
-tail7 = df.tail(7)
-prev7 = df.iloc[-14:-7] if len(df) >= 14 else df.head(0)
+# 用「最近 7 个有订单的日子」而不是最近 7 个日历日——
+# 数据集末尾（2018-10）只有十几单，直接取 df.tail(7) 会让所有 KPI 变成 0
+active = df[df['orders'] > 0].reset_index(drop=True)
+tail7 = active.tail(7)
+prev7 = active.iloc[-14:-7] if len(active) >= 14 else active.head(0)
 
 def _sum(s, col):
     return s[col].sum() if len(s) else np.nan
@@ -363,6 +374,15 @@ c5.metric('差评率', f'{bad_now*100:.2f}%' if pd.notna(bad_now) else '—',
           _delta(bad_now, bad_prev), delta_color='inverse')
 c6.metric('平均评分', f'{sc_now:.2f}' if pd.notna(sc_now) else '—',
           _delta(sc_now, sc_prev, pct=False))
+
+if len(tail7):
+    st.caption(
+        f'KPI 统计区间：**{tail7["dt"].min():%Y-%m-%d} ~ {tail7["dt"].max():%Y-%m-%d}**'
+        f'（最近 7 个有订单日，共 {int(ord_now):,} 单）；'
+        f'环比基准：{prev7["dt"].min():%Y-%m-%d} ~ {prev7["dt"].max():%Y-%m-%d}'
+        if len(prev7) else
+        f'KPI 统计区间：{tail7["dt"].min():%Y-%m-%d} ~ {tail7["dt"].max():%Y-%m-%d}'
+    )
 
 st.markdown('---')
 
