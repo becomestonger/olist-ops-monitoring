@@ -53,10 +53,13 @@ DATA_START = pd.Timestamp('2016-09-04').date()
 DATA_END = pd.Timestamp('2018-10-17').date()
 
 # 默认展示区间：排除两端数据稀疏的月份
-# 2016 年每月只有几十单，2018-09/10 数据集未收全（合计仅 20 单），
-# 直接看全区间会让 KPI 失真（末 7 天只有 7 单、准时率算不出来）
+# 2016 年每月只有几十单；2018-08-27 之后数据采集基本停止（该周仅 130 单，
+# 之后每周个位数），若把默认末日设在 08-31，KPI 环比会出现 -80% 的假暴跌。
 DEFAULT_START = pd.Timestamp('2017-01-01').date()
-DEFAULT_END = pd.Timestamp('2018-08-31').date()
+DEFAULT_END = pd.Timestamp('2018-08-19').date()
+
+# 数据实际可信的截止日（之后单量断崖式下降，仅作全量查看用）
+DATA_TRUSTED_END = pd.Timestamp('2018-08-26').date()
 
 # 告警阈值（依据：实测 z 的标准差为 1.33，用 2σ 会导致 11.8% 天数告警，过吵）
 Z_WARN = 2.5      # 关注
@@ -341,6 +344,17 @@ def _delta(cur, prev, pct=True, good_up=True):
     sign = '+' if d >= 0 else ''
     return f'{sign}{d:.1f}{unit}'
 
+
+def _money(v):
+    """紧凑金额格式：卡片窄，'R$ 1,234,567' 会显示成 'R$ 1,234,...' 被截断。"""
+    if pd.isna(v):
+        return '—'
+    if abs(v) >= 1_000_000:
+        return f'R$ {v/1_000_000:.2f}M'
+    if abs(v) >= 10_000:
+        return f'R$ {v/1_000:.1f}k'
+    return f'R$ {v:,.0f}'
+
 # 用「最近 7 个有订单的日子」而不是最近 7 个日历日——
 # 数据集末尾（2018-10）只有十几单，直接取 df.tail(7) 会让所有 KPI 变成 0
 active = df[df['orders'] > 0].reset_index(drop=True)
@@ -362,7 +376,7 @@ sc_now = tail7['avg_score'].mean() if len(tail7) else np.nan
 sc_prev = prev7['avg_score'].mean() if len(prev7) else np.nan
 
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-c1.metric('GMV（近7日）', f'R$ {gmv_now:,.0f}' if pd.notna(gmv_now) else '—',
+c1.metric('GMV（近7日）', _money(gmv_now),
           _delta(gmv_now, gmv_prev))
 c2.metric('订单量（近7日）', f'{ord_now:,.0f}' if pd.notna(ord_now) else '—',
           _delta(ord_now, ord_prev))
@@ -376,13 +390,18 @@ c6.metric('平均评分', f'{sc_now:.2f}' if pd.notna(sc_now) else '—',
           _delta(sc_now, sc_prev, pct=False))
 
 if len(tail7):
-    st.caption(
-        f'KPI 统计区间：**{tail7["dt"].min():%Y-%m-%d} ~ {tail7["dt"].max():%Y-%m-%d}**'
-        f'（最近 7 个有订单日，共 {int(ord_now):,} 单）；'
-        f'环比基准：{prev7["dt"].min():%Y-%m-%d} ~ {prev7["dt"].max():%Y-%m-%d}'
-        if len(prev7) else
-        f'KPI 统计区间：{tail7["dt"].min():%Y-%m-%d} ~ {tail7["dt"].max():%Y-%m-%d}'
-    )
+    kpi_range = (f'KPI 统计区间：**{tail7["dt"].min():%Y-%m-%d} ~ {tail7["dt"].max():%Y-%m-%d}**'
+                 f'（最近 7 个有订单日，共 {int(ord_now):,} 单）')
+    if len(prev7):
+        kpi_range += (f'；环比基准：{prev7["dt"].min():%Y-%m-%d}'
+                      f' ~ {prev7["dt"].max():%Y-%m-%d}')
+    st.caption(kpi_range)
+
+    if end > DATA_TRUSTED_END:
+        st.caption(
+            f'⚠️ 所选区间包含 {DATA_TRUSTED_END:%Y-%m-%d} 之后的数据。'
+            '该时段订单采集不完整（每周仅个位数），环比会出现大幅波动，指标仅供参考。'
+        )
 
 st.markdown('---')
 
